@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <permission android:name="io.github.threeinone.permission.REFRESH" android:protectionLevel="signature" />
+    <uses-permission android:name="io.github.threeinone.permission.REFRESH" />
+    <queries><package android:name="com.android.systemui" /></queries>
+    <application
+        android:allowBackup="false"
+        android:label="3IN1"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher"
+        android:theme="@style/AppTheme"
+        android:supportsRtl="true">
+        <meta-data android:name="xposedmodule" android:value="true" />
+        <meta-data android:name="xposeddescription" android:value="电量、Wi-Fi 与蜂窝信号三合一 · ColorOS 16" />
+        <meta-data android:name="xposedminversion" android:value="93" />
+        <meta-data android:name="xposedsharedprefs" android:value="true" />
+        <meta-data android:name="xposedscope" android:resource="@array/xposed_scope" />
+        <activity android:name=".ui.MainActivity" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+        <provider android:name=".config.DiagnosticsProvider"
+            android:authorities="io.github.threeinone.diagnostics"
+            android:exported="true" />
+    </application>
+</manifest>
