@@ -267,7 +267,7 @@ class MainActivity : Activity() {
                 if (confirm && checked) {
                     internal = true; widget.isChecked = false; internal = false
                     AlertDialog.Builder(this).setTitle("启用系统图标替换？")
-                        .setMessage("适用于 PLK110 / ColorOS 16.0.3.502。异常时在 LSPosed 停用本模块并重启即可恢复。不会自动重启系统。")
+                        .setMessage("基于 ColorOS 16 机型开发，其他 Android/ColorOS 版本不保证。异常时在 LSPosed 停用本模块并重启即可恢复。不会自动重启系统。")
                         .setNegativeButton("取消", null)
                         .setPositiveButton("启用") { _, _ ->
                             internal = true; widget.isChecked = true; internal = false

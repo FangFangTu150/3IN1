@@ -190,12 +190,9 @@ private class ColorOsAdapter(private val loader: ClassLoader) {
     private fun initialize(c: Context) {
         if (context != null) return
         context = c
-        val version = c.packageManager.getPackageInfo("com.android.systemui", 0).versionName
-        val display = XposedHelpers.callStaticMethod(
-            XposedHelpers.findClass("android.os.SystemProperties", loader), "get", "ro.build.display.id"
-        ) as String
-        supported = Build.MODEL == "PLK110" && Build.VERSION.SDK_INT == 36 &&
-            display == "PLK110_16.0.3.502(CN01)" && version == "16.00.12"
+        // Runtime compatibility is documented as ColorOS 16-only; do not gate on
+        // an exact model, firmware build, or SystemUI version.
+        supported = true
         c.registerReceiver(object : BroadcastReceiver() {
             override fun onReceive(context: Context?, intent: Intent?) {
                 if (intent?.action == IndicatorConfig.REFRESH) reloadRequests.request()

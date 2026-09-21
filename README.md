@@ -2,7 +2,7 @@
 
 <p align="center"><img src="app/src/main/res/drawable-nodpi/app_logo.png" width="96" alt="3IN1 Logo"></p>
 
-> **0.1.6 compat 预发布。** 面向已分析固件的兼容性测试构建，不是全机型支持声明，也不代表完整真机验收。
+> **0.1.6 compat 预发布。** 基于 ColorOS 16 机型开发与验证，不是全机型支持声明；其他 Android/ColorOS 版本不作兼容保证。
 
 [下载 APK 与校验文件](https://github.com/FangFangTu150/3IN1/releases/tag/v0.1.6) · [提交问题](https://github.com/FangFangTu150/3IN1/issues) · [安装与恢复](docs/INSTALL.md)
 
@@ -14,19 +14,17 @@
 - 不修改 QS（快捷设置）或 AOD，不注入其他应用，不提供遥测、常驻轮询、快充检测或性能模式检测。
 - 继承 SystemUI 父级防烧屏移动，但不能保证 OLED 不老化。
 
-## 0.1.6 精确适配 gate
+## 0.1.6 兼容性范围
 
 | 项目 | 值 |
 | --- | --- |
-| 设备 | 一加 15 / OnePlus `PLK110` |
-| Android | 16 / API 36 |
-| ColorOS | `PLK110_16.0.3.502(CN01)` |
-| SystemUI | `16.00.12` |
+| 开发与验证范围 | ColorOS 16 / Android 16 / API 36 |
+| 本次真机验证 | 一加 13 / `PJZ110` / `PJZ110_16.0.10.501(CN01)` |
 | 开发与用户测试框架 | LSPosed Irena `1.9.2 (7249)`，API 100（非运行时版本 gate） |
 | 作用域 | 仅 `com.android.systemui` |
 | legacy Xposed | `minversion 93` |
 
-`minSdk=34` 只表示可安装范围，不扩大上述 gate。gate 不匹配时模块应保留原图标，不宣传全机型支持。
+运行时不再按精确型号、固件构建号或 SystemUI 版本阻断；反射契约不满足或运行时异常时仍会回退原图标。项目仅基于 ColorOS 16 机型开发，其他 Android/ColorOS 版本不作保证；不同 ColorOS 16 机型仍需自行真机验收。
 
 ## 配置默认值
 
@@ -58,7 +56,7 @@
 
 ## 证据边界
 
-0.1.6 本地构建、Lint 和 55 项 JUnit/Robolectric 测试通过，但本地测试不执行真实 ART/Xposed hook。0.1.1 用户截图证明目标设备上曾实际替换，同时出现 tint/spacing 问题；0.1.2-0.1.6 后续修复尚未完成完整真机验收。
+0.1.6 本地构建、Lint 和 55 项 JUnit/Robolectric 测试通过；一加 13 / `PJZ110` 真机验证已通过，但本地测试不执行真实 ART/Xposed hook，其他机型仍需单独验收。
 
 ![离线状态效果图](docs/images/visual-0.1.4.png)
 
