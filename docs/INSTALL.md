@@ -6,7 +6,7 @@
 
 本项目仅基于 ColorOS 16 / Android 16/API 36 机型开发，其他 Android/ColorOS 版本不作保证。本次已在一加 13 / `PJZ110` / `PJZ110_16.0.10.501(CN01)` 上通过真机验证；其他机型仍需单独验收。当前验证框架为 LSPosed Irena `1.9.2 (7249)` API 100；legacy Xposed 声明为 `minversion 93`。
 
-1. 从 [v0.1.6 预发布页面](https://github.com/FangFangTu150/3IN1/releases/tag/v0.1.6) 下载并校验 `3IN1-0.1.6-compat.apk`，然后安装。本地构建输出为 `dist/3IN1-0.1.6-compat.apk`。
+1. 从 [v0.1.8 预发布页面](https://github.com/FangFangTu150/3IN1/releases/tag/v0.1.8) 下载并校验 `3IN1-0.1.8-compat.apk`；本版本尚待本轮真机验收。
 2. 打开 3IN1 检查预览；“启用三合一”默认关闭。
 3. 在 LSPosed 启用模块，并且只选择 `com.android.systemui`。不要选择 Android Framework、所有应用或无关进程。
 4. 启用作用域后重新打开 3IN1，使激活前保存的设置有机会迁移到共享目录；不要清除数据。
@@ -20,7 +20,7 @@
 能打开应用时先关闭替换；不能打开时先在 LSPosed 停用模块。使用相同包名和相同的现有 debug/test 签名覆盖安装，不要清除数据：
 
 ```powershell
-adb install -r dist/3IN1-0.1.6-compat.apk
+adb install -r dist/3IN1-0.1.8-compat.apk
 ```
 
 更新后确认作用域仍只有 `com.android.systemui`，重启 SystemUI 或设备，再刷新诊断。签名不一致时停止，不要用卸载或清除数据绕过更新限制；项目不发布签名密钥。

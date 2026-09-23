@@ -65,7 +65,7 @@ class VisualRevisionTest {
             Triple("8 · 250%", IndicatorState.demo.copy(battery = 8), IndicatorConfig(showNumber = true, numberScale = 250)),
             Triple("31% · 自动隐藏", IndicatorState.demo.copy(battery = 31), IndicatorConfig(autoNumber = true, numberThreshold = 30, numberScale = 250)),
             Triple("30% · 自动显示", IndicatorState.demo.copy(battery = 30), IndicatorConfig(autoNumber = true, numberThreshold = 30, numberScale = 250)),
-            Triple("充电 30% · 仍显示", IndicatorState.demo.copy(battery = 30, batteryPhase = BatteryPhase.CHARGING), IndicatorConfig(autoNumber = true, numberThreshold = 30, numberScale = 250)),
+            Triple("充电 30% · 闪电优先", IndicatorState.demo.copy(battery = 30, batteryPhase = BatteryPhase.CHARGING), IndicatorConfig(autoNumber = true, numberThreshold = 30, numberScale = 250)),
             Triple("充电 31% · 恢复闪电", IndicatorState.demo.copy(battery = 31, batteryPhase = BatteryPhase.CHARGING), IndicatorConfig(autoNumber = true, numberThreshold = 30, numberScale = 250))
         )
         cases.forEachIndexed { row, (name, state, config) ->
@@ -100,12 +100,13 @@ class VisualRevisionTest {
         }
     }
 
-    @Test fun numberUsesTintWhileChargingArcKeepsGreen() {
+    @Test fun chargingOverridesNumberAndKeepsGreen() {
         val state = IndicatorState.demo.copy(battery = 100, batteryPhase = BatteryPhase.CHARGING)
         for (tint in listOf(Color.BLACK, Color.WHITE)) {
             val b = render(state, IndicatorConfig(showNumber = true), tint)
             val numberPixels = (18..48).flatMap { y -> (115..185).map { x -> b.getPixel(x, y) } }
-            assertTrue(numberPixels.count { it == tint } > 30)
+            assertEquals(0, numberPixels.count { it == tint })
+            assertTrue(b.sameAs(render(state, IndicatorConfig(), tint)))
             assertTrue("Arc must retain charging green", (0 until 300).any { y ->
                 (0 until 300).any { x -> b.getPixel(x, y) == 0xff1cb753.toInt() }
             })

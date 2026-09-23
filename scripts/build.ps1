@@ -12,8 +12,11 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "Gradle failed: $LASTEXITCODE" }
     New-Item -ItemType Directory -Path (Join-Path $root 'dist') -Force | Out-Null
     Copy-Item -LiteralPath (Join-Path $root 'app\build\outputs\apk\compat\app-compat.apk') `
-        -Destination (Join-Path $root 'dist\3IN1-0.1.6-compat.apk')
-    Get-FileHash -LiteralPath (Join-Path $root 'dist\3IN1-0.1.6-compat.apk') -Algorithm SHA256
+        -Destination (Join-Path $root 'dist\3IN1-0.1.8-compat.apk')
+    $hash = Get-FileHash -LiteralPath (Join-Path $root 'dist\3IN1-0.1.8-compat.apk') -Algorithm SHA256
+    "$($hash.Hash.ToLowerInvariant())  3IN1-0.1.8-compat.apk" |
+        Set-Content -LiteralPath (Join-Path $root 'dist\3IN1-0.1.8-compat.apk.sha256') -Encoding ascii
+    $hash
 } finally {
     $env:JAVA_TOOL_OPTIONS = $previous
     Pop-Location

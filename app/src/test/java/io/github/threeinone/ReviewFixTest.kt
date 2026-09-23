@@ -2,11 +2,13 @@ package io.github.threeinone
 
 import android.content.pm.PermissionInfo
 import android.net.NetworkCapabilities
+import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.view.View
 import android.widget.LinearLayout
 import io.github.threeinone.config.IndicatorConfig
+import io.github.threeinone.config.storeDiagnosticReport
 import io.github.threeinone.hook.AccessibilityOverride
 import io.github.threeinone.hook.CoalescedReload
 import io.github.threeinone.model.WifiPhase
@@ -118,5 +120,25 @@ class ReviewFixTest {
             permission.protectionLevel and PermissionInfo.PROTECTION_MASK_BASE)
         val info = pm.getPackageInfo(context.packageName, android.content.pm.PackageManager.GET_PERMISSIONS)
         assertTrue(info.requestedPermissions.orEmpty().contains(IndicatorConfig.REFRESH_PERMISSION))
+    }
+
+    @Test fun diagnosticProbeSnapshotSurvivesLaterUnrelatedStatus() {
+        val prefs = RuntimeEnvironment.getApplication()
+            .getSharedPreferences("diagnostics-token", 0)
+        storeDiagnosticReport(prefs, Bundle().apply {
+            putString("status", "first")
+            putLong("revision", 1)
+            putString(IndicatorConfig.PROBE_TOKEN, "token-1")
+        })
+        storeDiagnosticReport(prefs, Bundle().apply {
+            putString("status", "later")
+            putLong("revision", 2)
+        })
+        assertEquals("token-1", prefs.getString(IndicatorConfig.PROBE_TOKEN, null))
+        assertEquals("first", prefs.getString(IndicatorConfig.PROBE_STATUS, null))
+        assertTrue(prefs.getLong(IndicatorConfig.PROBE_TIME, 0) > 0)
+        assertEquals(1, prefs.getLong(IndicatorConfig.PROBE_REVISION, -1))
+        assertEquals("later", prefs.getString("status", null))
+        assertEquals(2, prefs.getLong("revision", -1))
     }
 }

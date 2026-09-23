@@ -25,9 +25,10 @@ data class IndicatorConfig(
     val autoNumber: Boolean = false,
     val numberThreshold: Int = 20
 ) {
-    fun showsNumber(state: IndicatorState): Boolean = showNumber ||
+    fun showsNumber(state: IndicatorState): Boolean =
+        state.batteryPhase != BatteryPhase.CHARGING && state.batteryPhase != BatteryPhase.FULL && (showNumber ||
         (autoNumber &&
-            state.battery in 0..numberThreshold.coerceIn(1, 100))
+            state.battery in 0..numberThreshold.coerceIn(1, 100)))
 
     fun batteryColor(state: IndicatorState, tint: Int): Int = when {
         !colors || state.battery < 0 -> tint
@@ -41,6 +42,23 @@ data class IndicatorConfig(
         const val FILE = "indicator"
         const val REFRESH = "$PACKAGE.REFRESH"
         const val REFRESH_PERMISSION = "$PACKAGE.permission.REFRESH"
+        const val PROBE_TOKEN = "probeToken"
+        const val PROBE_STATUS = "probeStatus"
+        const val PROBE_TIME = "probeTime"
+        const val PROBE_REVISION = "probeRevision"
+        fun normalizeNumberMode(p: SharedPreferences): Boolean {
+            if (!p.getBoolean("showNumber", false) || !p.getBoolean("autoNumber", false)) return false
+            p.edit().putBoolean("autoNumber", false).apply()
+            return true
+        }
+
+        fun setNumberMode(p: SharedPreferences, key: String, enabled: Boolean) {
+            require(key == "showNumber" || key == "autoNumber")
+            val other = if (key == "showNumber") "autoNumber" else "showNumber"
+            val editor = p.edit().putBoolean(key, enabled)
+            if (enabled) editor.putBoolean(other, false)
+            editor.apply()
+        }
         fun read(p: SharedPreferences) = IndicatorConfig(
             enabled = p.getBoolean("enabled", false), lockscreen = p.getBoolean("lockscreen", true),
             size = p.getInt("size", 22).coerceIn(16, 32),
@@ -58,7 +76,7 @@ data class IndicatorConfig(
             lowThreshold = p.getInt("lowThreshold", 20).coerceIn(5, 50),
             showNumber = p.getBoolean("showNumber", false),
             numberScale = p.getInt("numberScale", 115).coerceIn(75, 250),
-            autoNumber = p.getBoolean("autoNumber", false),
+            autoNumber = !p.getBoolean("showNumber", false) && p.getBoolean("autoNumber", false),
             numberThreshold = p.getInt("numberThreshold", 20).coerceIn(1, 100)
         )
     }

@@ -10,8 +10,8 @@ android {
         applicationId = "io.github.threeinone"
         minSdk = 34
         targetSdk = 36
-        versionCode = 7
-        versionName = "0.1.6"
+        versionCode = 9
+        versionName = "0.1.8"
     }
     buildTypes {
         create("compat") {

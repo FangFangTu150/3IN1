@@ -20,6 +20,7 @@ import io.github.threeinone.R
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.UUID
 import java.util.concurrent.Executors
 
 class MainActivity : Activity() {
@@ -33,7 +34,9 @@ class MainActivity : Activity() {
     private val handler = Handler(Looper.getMainLooper())
     private val writer = Executors.newSingleThreadExecutor()
     private var previewIndex = 0
-    private var lastProbe = 0L
+    private var lastProbeToken: String? = null
+    private val numberSwitches = mutableMapOf<String, Switch>()
+    private var updatingNumberSwitches = false
     private val dark get() = resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK == Configuration.UI_MODE_NIGHT_YES
     private val ink get() = if (dark) Color.rgb(241, 244, 245) else Color.rgb(25, 31, 33)
     private val muted get() = if (dark) Color.rgb(160, 173, 178) else Color.rgb(94, 109, 115)
@@ -58,8 +61,10 @@ class MainActivity : Activity() {
         catch (_: SecurityException) { getSharedPreferences(IndicatorConfig.FILE, MODE_PRIVATE) }
         PreferenceMigration.importOnce(prefs,
             java.io.File(applicationInfo.dataDir, "shared_prefs/${IndicatorConfig.FILE}.xml"))
+        val normalized = IndicatorConfig.normalizeNumberMode(prefs)
         previewIndex = bundle?.getInt("preview", 0)?.coerceIn(IndicatorState.previews.indices) ?: 0
         buildPage()
+        if (normalized) scheduleSave()
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
@@ -83,6 +88,7 @@ class MainActivity : Activity() {
     }
 
     private fun buildPage() {
+        numberSwitches.clear()
         root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(this@MainActivity.background)
@@ -229,22 +235,31 @@ class MainActivity : Activity() {
     }
 
     private fun probe() {
-        lastProbe = System.currentTimeMillis()
-        sendBroadcast(Intent(IndicatorConfig.REFRESH).setPackage("com.android.systemui"))
+        val token = UUID.randomUUID().toString()
+        lastProbeToken = token
+        sendBroadcast(Intent(IndicatorConfig.REFRESH)
+            .setPackage("com.android.systemui")
+            .putExtra(IndicatorConfig.PROBE_TOKEN, token))
         handler.postDelayed({ if (!isDestroyed) updateDiagnostics() }, 650)
         handler.postDelayed({ if (!isDestroyed) updateDiagnostics() }, 2000)
     }
 
     private fun updateDiagnostics() {
         val p = getSharedPreferences("diagnostics", MODE_PRIVATE)
-        val timestamp = p.getLong("time", 0)
-        val recent = timestamp >= lastProbe - 300
+        val matchedProbe = lastProbeToken != null &&
+            p.getString(IndicatorConfig.PROBE_TOKEN, null) == lastProbeToken
+        val timestamp = if (matchedProbe) p.getLong(IndicatorConfig.PROBE_TIME, 0)
+            else p.getLong("time", 0)
+        val status = if (matchedProbe) p.getString(IndicatorConfig.PROBE_STATUS, "")
+            else p.getString("status", "")
+        val revision = if (matchedProbe) p.getLong(IndicatorConfig.PROBE_REVISION, -1)
+            else p.getLong("revision", -1)
         val stamp = if (timestamp > 0) SimpleDateFormat("MM-dd HH:mm:ss", Locale.CHINA).format(Date(timestamp)) else ""
-        diagnostic.text = if (recent) "${p.getString("status", "")}\n$stamp"
+        diagnostic.text = if (matchedProbe) "$status\n$stamp"
             else "未收到本次回执，请检查 LSPosed 作用域及 SystemUI 是否已重启" +
-                if (timestamp > 0) "\n上次：${p.getString("status", "")}\n$stamp" else ""
-        val received = p.getLong("revision", -1) == prefs.getLong("revision", 0)
-        saved.text = if (recent && received) "设置已保存 · SystemUI 已接收" else "设置已保存 · 系统尚未确认"
+                if (timestamp > 0) "\n上次：$status\n$stamp" else ""
+        val received = matchedProbe && revision == prefs.getLong("revision", 0)
+        saved.text = if (received) "设置已保存 · SystemUI 已接收" else "设置已保存 · 系统尚未确认"
     }
 
     private fun section(name: String) {
@@ -262,8 +277,21 @@ class MainActivity : Activity() {
             setPadding(0, dp(12), 0, dp(12)); minHeight = dp(52)
         }
         var internal = false
+        val numberMode = key == "showNumber" || key == "autoNumber"
+        if (numberMode) numberSwitches[key] = widget
         widget.setOnCheckedChangeListener { _, checked ->
-            if (!internal) {
+            if (!internal && !updatingNumberSwitches) {
+                if (numberMode) {
+                    IndicatorConfig.setNumberMode(prefs, key, checked)
+                    updatingNumberSwitches = true
+                    try {
+                        numberSwitches.forEach { (name, switch) ->
+                            switch.isChecked = prefs.getBoolean(name, false)
+                        }
+                    } finally { updatingNumberSwitches = false }
+                    scheduleSave()
+                    return@setOnCheckedChangeListener
+                }
                 if (confirm && checked) {
                     internal = true; widget.isChecked = false; internal = false
                     AlertDialog.Builder(this).setTitle("启用系统图标替换？")

@@ -17,7 +17,7 @@ import kotlin.math.min
 class ModuleEntry : IXposedHookLoadPackage {
     override fun handleLoadPackage(param: XC_LoadPackage.LoadPackageParam) {
         if (param.packageName != "com.android.systemui" || param.processName != "com.android.systemui") return
-        XposedBridge.log("3IN1 0.1.6: SystemUI entry")
+        XposedBridge.log("3IN1: SystemUI entry")
         runCatching { ColorOsAdapter(param.classLoader).install() }
             .onFailure { XposedBridge.log("3IN1: adapter unavailable: $it") }
     }
@@ -31,6 +31,7 @@ private class ColorOsAdapter(private val loader: ClassLoader) {
     private var config = IndicatorConfig()
     private var state = IndicatorState()
     private var revision = 0L
+    private var pendingProbeToken: String? = null
     private var context: Context? = null
     private var controller: Any? = null
     private var source: SystemStateSource? = null
@@ -54,9 +55,10 @@ private class ColorOsAdapter(private val loader: ClassLoader) {
             main.post {
                 config = next; revision = rev
                 if (!hasSettings) XposedBridge.log("3IN1: no shared configuration yet; open settings after activation")
-                guarded { manageSource(); refresh(layout = true); report() }
+                val probeToken = pendingProbeToken.also { pendingProbeToken = null }
+                guarded { manageSource(); refresh(layout = true); report(probeToken) }
             }
-        }.onFailure { error -> main.post { fail(error) } }
+        }.onFailure { error -> main.post { pendingProbeToken = null; fail(error) } }
     }
     private val reloadRequests = CoalescedReload(io, reload)
 
@@ -190,12 +192,22 @@ private class ColorOsAdapter(private val loader: ClassLoader) {
     private fun initialize(c: Context) {
         if (context != null) return
         context = c
+        val version = runCatching {
+            @Suppress("DEPRECATION")
+            c.packageManager.getPackageInfo(IndicatorConfig.PACKAGE, 0).versionName
+        }.getOrNull()?.takeIf { it.isNotBlank() } ?: "unknown"
+        XposedBridge.log("3IN1 $version: module initialized")
         // Runtime compatibility is documented as ColorOS 16-only; do not gate on
         // an exact model, firmware build, or SystemUI version.
         supported = true
         c.registerReceiver(object : BroadcastReceiver() {
             override fun onReceive(context: Context?, intent: Intent?) {
-                if (intent?.action == IndicatorConfig.REFRESH) reloadRequests.request()
+                if (intent?.action == IndicatorConfig.REFRESH) {
+                    intent.getStringExtra(IndicatorConfig.PROBE_TOKEN)
+                        ?.takeIf { it.isNotBlank() }
+                        ?.let { pendingProbeToken = it }
+                    reloadRequests.request()
+                }
             }
         }, IntentFilter(IndicatorConfig.REFRESH), IndicatorConfig.REFRESH_PERMISSION, main, Context.RECEIVER_EXPORTED)
         reloadRequests.request()
@@ -314,7 +326,7 @@ private class ColorOsAdapter(private val loader: ClassLoader) {
         s.accessibility.restore()
     }
 
-    private fun report() {
+    private fun report(probeToken: String? = null) {
         val c = context ?: return
         val text = when {
             fault != null -> "已回退原图标：$fault"
@@ -331,7 +343,11 @@ private class ColorOsAdapter(private val loader: ClassLoader) {
         }
         io.post {
             runCatching { c.contentResolver.call(Uri.parse("content://${IndicatorConfig.PACKAGE}.diagnostics"),
-                "report", null, Bundle().apply { putString("status", text); putLong("revision", revision) }) }
+                "report", null, Bundle().apply {
+                    putString("status", text)
+                    putLong("revision", revision)
+                    if (!probeToken.isNullOrBlank()) putString(IndicatorConfig.PROBE_TOKEN, probeToken)
+                }) }
         }
     }
 

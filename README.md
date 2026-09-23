@@ -2,9 +2,11 @@
 
 <p align="center"><img src="app/src/main/res/drawable-nodpi/app_logo.png" width="96" alt="3IN1 Logo"></p>
 
-> **0.1.6 compat 预发布。** 基于 ColorOS 16 机型开发与验证，不是全机型支持声明；其他 Android/ColorOS 版本不作兼容保证。
+> **0.1.8 compat 预发布。** 基于 ColorOS 16 机型开发与验证，不是全机型支持声明；其他 Android/ColorOS 版本不作兼容保证。
 
-[下载 APK 与校验文件](https://github.com/FangFangTu150/3IN1/releases/tag/v0.1.6) · [提交问题](https://github.com/FangFangTu150/3IN1/issues) · [安装与恢复](docs/INSTALL.md)
+当前源码与 **0.1.8 compat 预发布版**一致；本轮真机验收待完成。新增行为与本地验证见 [0.1.8 更新说明](docs/releases/v0.1.8.md)。
+
+[下载 APK 与校验文件](https://github.com/FangFangTu150/3IN1/releases/tag/v0.1.8) · [提交问题](https://github.com/FangFangTu150/3IN1/issues) · [安装与恢复](docs/INSTALL.md)
 
 3IN1 是需要 Root/LSPosed（或兼容 legacy Xposed 框架）的 Android 模块，在 SystemUI 原有电池宿主内绘制电量、Wi-Fi 与蜂窝信号组合指示器。
 
@@ -52,7 +54,7 @@
 | `autoNumber` | `false` | 低于或等于阈值自动显示 |
 | `numberThreshold` | `20%` | `1-100%`，含等于 |
 
-始终显示优先于自动显示；未知电量不会触发自动显示。有效百分比即使充放电状态为 UNKNOWN 仍可驱动进度和低电量逻辑，但不会伪造充电/充满/暂停标记。
+0.1.8 起，常显与自动显示互斥，充电闪电和充满对勾始终优先于数字；旧配置两项均开启时保留常显。未知电量不会触发自动显示。有效百分比即使充放电状态为 UNKNOWN 仍可驱动进度和低电量逻辑，但不会伪造充电/充满/暂停标记。
 
 ## 证据边界
 

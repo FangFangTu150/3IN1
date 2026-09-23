@@ -38,14 +38,15 @@ class IndicatorRenderer {
             val battery = config.batteryColor(state, tint)
             val line = 5.5f * config.stroke / 100f
             val charging = state.batteryPhase == BatteryPhase.CHARGING
+            val full = state.batteryPhase == BatteryPhase.FULL
             // Fade only the arc layer, never the wallpaper or previously drawn content.
-            val arcLayer = if (charging || showNumber) canvas.saveLayer(0f, -4f, 100f, 100f, null) else -1
+            val arcLayer = if (charging || full || showNumber) canvas.saveLayer(0f, -4f, 100f, 100f, null) else -1
             bounds.set(12f, 9f, 88f, 85f)
             stroke(tint, line, 46)
             canvas.drawArc(bounds, 150f, 240f, false, paint)
             stroke(battery, line)
             if (state.progress > 0) canvas.drawArc(bounds, 150f, 240f * state.progress, false, paint)
-            if (charging || showNumber) {
+            if (charging || full || showNumber) {
                 topHalo(canvas, if (showNumber) 50f else 51f,
                     if (showNumber) numberHaloWidth else 18f,
                     if (showNumber) numberHaloHeight else 18f,
@@ -59,10 +60,11 @@ class IndicatorRenderer {
                 path.moveTo(53f, 0f); path.lineTo(44f, 12f); path.lineTo(50f, 12f)
                 path.lineTo(47f, 21f); path.lineTo(58f, 8f); path.lineTo(52f, 8f); path.close()
                 fill(battery); canvas.drawPath(path, paint)
-            } else if (state.batteryPhase == BatteryPhase.FULL) {
-                stroke(battery, 2.4f)
-                canvas.drawLine(44f, 22f, 49f, 27f, paint)
-                canvas.drawLine(49f, 27f, 57f, 19f, paint)
+            } else if (full) {
+                stroke(battery, 3.2f)
+                path.reset()
+                path.moveTo(43f, 10f); path.lineTo(49f, 16f); path.lineTo(59f, 5f)
+                canvas.drawPath(path, paint)
             } else if (state.batteryPhase == BatteryPhase.PAUSED) {
                 stroke(tint, 2.4f)
                 canvas.drawLine(47f, 19f, 47f, 25f, paint)
@@ -191,12 +193,12 @@ class IndicatorRenderer {
     }
 
     private fun stroke(color: Int, width: Float, alpha: Int = 255) {
-        paint.reset(); paint.isAntiAlias = true; paint.color = color; paint.alpha = alpha
+        paint.reset(); paint.isAntiAlias = true; paint.color = withAlpha(color, alpha)
         paint.style = Paint.Style.STROKE; paint.strokeWidth = width; paint.strokeCap = Paint.Cap.ROUND
         paint.strokeJoin = Paint.Join.ROUND
     }
     private fun fill(color: Int, alpha: Int = 255) {
-        paint.reset(); paint.isAntiAlias = true; paint.color = color; paint.alpha = alpha
+        paint.reset(); paint.isAntiAlias = true; paint.color = withAlpha(color, alpha)
         paint.style = Paint.Style.FILL
     }
     private fun text(c: Canvas, value: String, x: Float, baseline: Float, size: Float, color: Int,
@@ -215,5 +217,11 @@ class IndicatorRenderer {
         paint.textSize = size; paint.textAlign = Paint.Align.CENTER
         val measured = paint.measureText(value)
         if (measured > maxWidth) paint.textSize *= maxWidth / measured
+    }
+
+    /** Preserve the SystemUI tint alpha while still applying each drawing layer's local alpha. */
+    private fun withAlpha(color: Int, localAlpha: Int): Int {
+        val alpha = (Color.alpha(color) * localAlpha.coerceIn(0, 255) + 127) / 255
+        return Color.argb(alpha, Color.red(color), Color.green(color), Color.blue(color))
     }
 }
