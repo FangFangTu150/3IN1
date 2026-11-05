@@ -11,13 +11,13 @@ import java.io.File
  */
 object PreferenceMigration {
     const val MARKER = "_private_imported_v1"
-    private val booleanKeys = setOf("enabled", "lockscreen", "colors", "showNumber", "autoNumber")
+    private val booleanKeys = setOf("enabled", "lockscreen", "colors", "showNumber", "autoNumber", "centerNumber")
     private val integerKeys = setOf("size", "wifiScale", "textScale", "stroke", "dotScale",
         "dotSpacing", "horizontalPadding", "verticalOffset", "chargingColor", "lowColor",
         "saverColor", "lowThreshold", "numberScale", "numberThreshold")
 
     fun importOnce(destination: SharedPreferences, legacyFile: File): Boolean {
-        if (destination.getBoolean(MARKER, false)) return false
+        if (SafePreferences.boolean(destination, MARKER, false)) return false
         // An existing destination is authoritative, including an explicit disabled state.
         if (destination.all.isNotEmpty()) {
             destination.edit().putBoolean(MARKER, true).apply()

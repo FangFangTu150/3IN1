@@ -29,7 +29,7 @@ Windows 路径可使用正斜杠；请替换为自己的 SDK 路径。该文件�
 脚本执行 `assembleCompat`、`lintCompat`、`testCompatUnitTest`，并复制非 debug APK 到：
 
 ```text
-dist/3IN1-0.1.8-compat.apk
+dist/3IN1-0.1.9-compat.apk
 ```
 
 跳过本地测试：
@@ -37,6 +37,8 @@ dist/3IN1-0.1.8-compat.apk
 ```powershell
 .\scripts\build.ps1 -SkipTests
 ```
+
+脚本从 compat 的 `output-metadata.json` 读取版本及 APK 文件名，同时生成 SHA-256 文件。支持 `-Offline` 和 `-InitScript <path>` 使用已有依赖缓存或本地仓库配置；不修改项目依赖版本。默认交付仍须完成测试。
 
 直接调用 Gradle：
 

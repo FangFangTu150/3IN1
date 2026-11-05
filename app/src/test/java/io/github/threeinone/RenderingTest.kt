@@ -192,7 +192,7 @@ class RenderingTest {
             root.layout(0, 0, width, height)
             val views = descendants(root)
             assertEquals(11, views.count { it is SeekBar })
-            assertEquals(5, views.count { it is Switch })
+            assertEquals(6, views.count { it is Switch })
             val spinner = views.filterIsInstance<Spinner>().single()
             spinner.setSelection(1)
             org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()

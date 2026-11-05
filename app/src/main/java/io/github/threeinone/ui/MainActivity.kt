@@ -14,6 +14,7 @@ import android.view.*
 import android.widget.*
 import io.github.threeinone.config.IndicatorConfig
 import io.github.threeinone.config.PreferenceMigration
+import io.github.threeinone.config.SafePreferences
 import io.github.threeinone.model.IndicatorState
 import io.github.threeinone.render.IndicatorView
 import io.github.threeinone.R
@@ -22,6 +23,8 @@ import java.util.Date
 import java.util.Locale
 import java.util.UUID
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicLong
+import java.lang.ref.WeakReference
 
 class MainActivity : Activity() {
     private lateinit var prefs: SharedPreferences
@@ -35,7 +38,9 @@ class MainActivity : Activity() {
     private val writer = Executors.newSingleThreadExecutor()
     private var previewIndex = 0
     private var lastProbeToken: String? = null
+    private val saveStatus = SaveStatus()
     private val numberSwitches = mutableMapOf<String, Switch>()
+    private val restrictedSettings = mutableListOf<RestrictedSetting>()
     private var updatingNumberSwitches = false
     private val dark get() = resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK == Configuration.UI_MODE_NIGHT_YES
     private val ink get() = if (dark) Color.rgb(241, 244, 245) else Color.rgb(25, 31, 33)
@@ -43,13 +48,23 @@ class MainActivity : Activity() {
     private val accent get() = if (dark) Color.rgb(99, 215, 196) else Color.rgb(0, 127, 112)
     private val background get() = if (dark) Color.rgb(21, 23, 25) else Color.WHITE
     private val sync = Runnable {
-        val revision = System.currentTimeMillis()
+        val generation = saveStatus.generation
+        val settings = prefs
+        val revision = revisions.updateAndGet {
+            maxOf(it + 1, System.currentTimeMillis(), SafePreferences.long(settings, "revision", 0) + 1)
+        }
+        val app = applicationContext
+        val token = UUID.randomUUID().toString()
+        val target = WeakReference(this)
+        val ui = handler
         writer.execute {
-            val success = prefs.edit().putLong("revision", revision).commit()
-            handler.post {
-                if (isDestroyed) return@post
-                saved.text = if (success) "设置已保存 · 等待系统回执" else "保存失败，请重试"
-                if (success) probe()
+            val success = runCatching { settings.edit().putLong("revision", revision).commit() }.getOrDefault(false)
+            if (success) notifySystem(app, token)
+            ui.post {
+                val activity = target.get()?.takeUnless { it.isDestroyed } ?: return@post
+                if (!activity.saveStatus.complete(generation, revision, success)) return@post
+                activity.saved.text = if (success) "设置已保存 · 等待系统回执" else "保存失败，请重试"
+                if (success) activity.observeProbe(token)
             }
         }
     }
@@ -62,6 +77,9 @@ class MainActivity : Activity() {
         PreferenceMigration.importOnce(prefs,
             java.io.File(applicationInfo.dataDir, "shared_prefs/${IndicatorConfig.FILE}.xml"))
         val normalized = IndicatorConfig.normalizeNumberMode(prefs)
+        if (SafePreferences.malformedKeys(prefs).isEmpty()) {
+            saveStatus.loaded(SafePreferences.long(prefs, "revision", 0))
+        }
         previewIndex = bundle?.getInt("preview", 0)?.coerceIn(IndicatorState.previews.indices) ?: 0
         buildPage()
         if (normalized) scheduleSave()
@@ -89,6 +107,7 @@ class MainActivity : Activity() {
 
     private fun buildPage() {
         numberSwitches.clear()
+        restrictedSettings.clear()
         root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(this@MainActivity.background)
@@ -155,7 +174,9 @@ class MainActivity : Activity() {
             }
         }
         root.addView(spinner, LinearLayout.LayoutParams(-1, dp(44)))
-        saved = label("本机设置", 12f, muted)
+        val malformed = SafePreferences.malformedKeys(prefs)
+        saved = label(if (malformed.isEmpty()) "本机设置"
+            else "配置类型异常，已使用默认值；可恢复默认", 12f, muted)
         root.addView(saved, LinearLayout.LayoutParams(-1, dp(24)))
         val scroll = ScrollView(this).apply { isFillViewport = true; clipToPadding = false }
         controls = LinearLayout(this).apply {
@@ -182,6 +203,7 @@ class MainActivity : Activity() {
         colorRow("省电模式", "saverColor", 0xFFFFB300.toInt())
         slider("低电量阈值", "lowThreshold", 5, 50, 20, "%")
         section("电量数字")
+        toggle("电量数字中间常显", "centerNumber", false)
         toggle("始终显示电量数字", "showNumber", false)
         toggle("低于阈值自动显示（含等于）", "autoNumber", false)
         slider("电量数字显示阈值", "numberThreshold", 1, 100, 20, "%")
@@ -215,6 +237,7 @@ class MainActivity : Activity() {
                     }.show()
             }
         }, LinearLayout.LayoutParams(-1, dp(52)))
+        updateRestrictions()
         updatePreview()
     }
 
@@ -230,18 +253,21 @@ class MainActivity : Activity() {
 
     private fun scheduleSave() {
         updatePreview()
+        saveStatus.pending()
         saved.text = "正在保存"
         handler.removeCallbacks(sync); handler.postDelayed(sync, 180)
     }
 
     private fun probe() {
         val token = UUID.randomUUID().toString()
+        notifySystem(applicationContext, token)
+        observeProbe(token)
+    }
+
+    private fun observeProbe(token: String) {
         lastProbeToken = token
-        sendBroadcast(Intent(IndicatorConfig.REFRESH)
-            .setPackage("com.android.systemui")
-            .putExtra(IndicatorConfig.PROBE_TOKEN, token))
-        handler.postDelayed({ if (!isDestroyed) updateDiagnostics() }, 650)
-        handler.postDelayed({ if (!isDestroyed) updateDiagnostics() }, 2000)
+        handler.postDelayed({ if (!isDestroyed && lastProbeToken == token) updateDiagnostics() }, 650)
+        handler.postDelayed({ if (!isDestroyed && lastProbeToken == token) updateDiagnostics() }, 2000)
     }
 
     private fun updateDiagnostics() {
@@ -258,8 +284,10 @@ class MainActivity : Activity() {
         diagnostic.text = if (matchedProbe) "$status\n$stamp"
             else "未收到本次回执，请检查 LSPosed 作用域及 SystemUI 是否已重启" +
                 if (timestamp > 0) "\n上次：$status\n$stamp" else ""
-        val received = matchedProbe && revision == prefs.getLong("revision", 0)
-        saved.text = if (received) "设置已保存 · SystemUI 已接收" else "设置已保存 · 系统尚未确认"
+        if (saveStatus.phase == SaveStatus.Phase.SAVED) {
+            val received = matchedProbe && revision == saveStatus.revision
+            saved.text = if (received) "设置已保存 · SystemUI 已接收" else "设置已保存 · 系统尚未确认"
+        }
     }
 
     private fun section(name: String) {
@@ -273,7 +301,7 @@ class MainActivity : Activity() {
 
     private fun toggle(title: String, key: String, default: Boolean, confirm: Boolean = false) {
         val widget = Switch(this).apply {
-            text = title; textSize = 16f; setTextColor(ink); isChecked = prefs.getBoolean(key, default)
+            text = title; textSize = 16f; setTextColor(ink); isChecked = SafePreferences.boolean(prefs, key, default)
             setPadding(0, dp(12), 0, dp(12)); minHeight = dp(52)
         }
         var internal = false
@@ -281,12 +309,18 @@ class MainActivity : Activity() {
         if (numberMode) numberSwitches[key] = widget
         widget.setOnCheckedChangeListener { _, checked ->
             if (!internal && !updatingNumberSwitches) {
+                if (isRestricted(key)) {
+                    internal = true
+                    widget.isChecked = SafePreferences.boolean(prefs, key, default)
+                    internal = false
+                    return@setOnCheckedChangeListener
+                }
                 if (numberMode) {
                     IndicatorConfig.setNumberMode(prefs, key, checked)
                     updatingNumberSwitches = true
                     try {
                         numberSwitches.forEach { (name, switch) ->
-                            switch.isChecked = prefs.getBoolean(name, false)
+                            switch.isChecked = SafePreferences.boolean(prefs, name, false)
                         }
                     } finally { updatingNumberSwitches = false }
                     scheduleSave()
@@ -302,27 +336,36 @@ class MainActivity : Activity() {
                             prefs.edit().putBoolean(key, true).apply(); scheduleSave()
                         }.show()
                 } else {
-                    prefs.edit().putBoolean(key, checked).apply(); scheduleSave()
+                    prefs.edit().putBoolean(key, checked).apply()
+                    if (key == "centerNumber") updateRestrictions()
+                    scheduleSave()
                 }
             }
         }
-        controls.addView(widget, LinearLayout.LayoutParams(-1, -2))
+        addSetting(key, title, widget)
     }
 
     private fun slider(title: String, key: String, min: Int, max: Int, default: Int, unit: String) {
         val top = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(0, dp(10), 0, 0) }
         top.addView(label(title, 15f), LinearLayout.LayoutParams(0, -2, 1f))
-        val value = label("${prefs.getInt(key, default)}$unit", 14f, accent).apply { typeface = Typeface.MONOSPACE }
+        val value = label("${SafePreferences.integer(prefs, key, default).coerceIn(min, max)}$unit", 14f, accent).apply { typeface = Typeface.MONOSPACE }
         top.addView(value)
-        controls.addView(top)
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(top)
+        }
         val bar = SeekBar(this).apply {
-            this.max = max - min; progress = prefs.getInt(key, default).coerceIn(min, max) - min
+            this.max = max - min; progress = SafePreferences.integer(prefs, key, default).coerceIn(min, max) - min
             contentDescription = title
             progressTintList = ColorStateList.valueOf(accent); thumbTintList = ColorStateList.valueOf(accent)
             setPadding(dp(4), 0, dp(4), 0)
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
                     if (!fromUser) return
+                    if (isRestricted(key)) {
+                        seekBar?.progress = SafePreferences.integer(prefs, key, default).coerceIn(min, max) - min
+                        return
+                    }
                     val next = progress + min
                     value.text = "$next$unit"
                     prefs.edit().putInt(key, next).apply(); scheduleSave()
@@ -331,7 +374,66 @@ class MainActivity : Activity() {
                 override fun onStopTrackingTouch(seekBar: SeekBar?) = Unit
             })
         }
-        controls.addView(bar, LinearLayout.LayoutParams(-1, dp(44)))
+        content.addView(bar, LinearLayout.LayoutParams(-1, dp(44)))
+        addSetting(key, title, content)
+    }
+
+    private fun isRestricted(key: String) =
+        key in RESTRICTED_KEYS && SafePreferences.boolean(prefs, "centerNumber", false)
+
+    private fun updateRestrictions() {
+        val locked = SafePreferences.boolean(prefs, "centerNumber", false)
+        restrictedSettings.forEach { it.setLocked(locked) }
+    }
+
+    private fun addSetting(key: String, title: String, content: View) {
+        val view = if (key in RESTRICTED_KEYS) {
+            RestrictedSetting(this, title, content).also { restrictedSettings.add(it) }
+        } else content
+        view.tag = key
+        controls.addView(view, LinearLayout.LayoutParams(-1, -2))
+    }
+
+    private class RestrictedSetting(context: Context, private val title: String, private val content: View) :
+        FrameLayout(context) {
+        private var locked = false
+        init {
+            addView(content, LayoutParams(-1, -2))
+            setOnClickListener {
+                if (locked) Toast.makeText(context, LOCKED_MESSAGE, Toast.LENGTH_SHORT).show()
+            }
+        }
+
+        fun setLocked(value: Boolean) {
+            locked = value
+            fun enable(view: View) {
+                view.isEnabled = !value
+                if (view is ViewGroup) for (i in 0 until view.childCount) enable(view.getChildAt(i))
+            }
+            enable(content)
+            content.alpha = if (value) .45f else 1f
+            content.importantForAccessibility = if (value) IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
+                else IMPORTANT_FOR_ACCESSIBILITY_AUTO
+            descendantFocusability = if (value) FOCUS_BLOCK_DESCENDANTS else FOCUS_BEFORE_DESCENDANTS
+            isClickable = value
+            isFocusable = value
+            importantForAccessibility = if (value) IMPORTANT_FOR_ACCESSIBILITY_YES else IMPORTANT_FOR_ACCESSIBILITY_NO
+            contentDescription = if (value) "$title，$LOCKED_MESSAGE" else null
+        }
+
+        override fun onInterceptTouchEvent(event: MotionEvent): Boolean =
+            locked || super.onInterceptTouchEvent(event)
+    }
+
+    companion object {
+        private val revisions = AtomicLong()
+        private fun notifySystem(context: Context, token: String) {
+            context.sendBroadcast(Intent(IndicatorConfig.REFRESH)
+                .setPackage("com.android.systemui")
+                .putExtra(IndicatorConfig.PROBE_TOKEN, token))
+        }
+        private const val LOCKED_MESSAGE = "已开启电量数字中间常显，请先关闭。"
+        private val RESTRICTED_KEYS = setOf("wifiScale", "textScale", "showNumber", "autoNumber", "numberThreshold")
     }
 
     private fun colorRow(title: String, key: String, default: Int) {
@@ -341,7 +443,7 @@ class MainActivity : Activity() {
             background = shape(if (dark) 0xFF262B2E.toInt() else 0xFFF1F4F5.toInt(), 4f)
             isClickable = true; isFocusable = true; contentDescription = "$title 颜色"
         }
-        val color = prefs.getInt(key, default)
+        val color = SafePreferences.integer(prefs, key, default)
         val swatch = View(this).apply { background = shape(color, 4f) }
         row.addView(swatch, LinearLayout.LayoutParams(dp(28), dp(28)).apply { marginEnd = dp(12) })
         row.addView(label(title, 15f), LinearLayout.LayoutParams(0, -2, 1f))
@@ -349,7 +451,7 @@ class MainActivity : Activity() {
         row.addView(hex)
         row.setOnClickListener {
             val input = EditText(this).apply {
-                setSingleLine(); setText(hex(prefs.getInt(key, default))); selectAll()
+                setSingleLine(); setText(hex(SafePreferences.integer(prefs, key, default))); selectAll()
                 contentDescription = "十六进制颜色"; inputType = android.text.InputType.TYPE_CLASS_TEXT
             }
             val holder = LinearLayout(this).apply {

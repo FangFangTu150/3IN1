@@ -10,6 +10,8 @@ class IndicatorRenderer {
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val bounds = RectF()
     private val path = Path()
+    private val glyphBounds = Rect()
+    private val numberTypeface = Typeface.create("sans-serif", Typeface.BOLD)
     private val lightningHalo = RadialGradient(
         0f, 0f, 18f,
         intArrayOf(0xF0000000.toInt(), 0xE8000000.toInt(), 0x60000000, Color.TRANSPARENT),
@@ -27,14 +29,17 @@ class IndicatorRenderer {
             val number = if (state.battery < 0) "?"
                 else state.battery.coerceIn(0, 100).toString()
             val numberSize = 13f * config.numberScale / 100
-            prepareText(number, numberSize, tint, 60f)
-            val numberBounds = Rect()
-            paint.getTextBounds(number, 0, number.length, numberBounds)
-            val haloPadding = 9f * config.numberScale / 115f
-            val numberHaloWidth = (paint.measureText(number) / 2 + haloPadding).coerceAtLeast(18f)
-            val numberHaloHeight = (numberBounds.height() / 2f + haloPadding).coerceAtLeast(18f)
-            // Keep the largest digits within the same square without shifting the Wi-Fi.
-            val numberCenterY = (numberBounds.height() / 2f + 1f).coerceAtLeast(11f)
+            var numberHaloWidth = 18f
+            var numberHaloHeight = 18f
+            var numberCenterY = 11f
+            if (showNumber) {
+                prepareText(number, numberSize, tint, 60f)
+                paint.getTextBounds(number, 0, number.length, glyphBounds)
+                val haloPadding = 9f * config.numberScale / 115f
+                numberHaloWidth = (paint.measureText(number) / 2 + haloPadding).coerceAtLeast(18f)
+                numberHaloHeight = (glyphBounds.height() / 2f + haloPadding).coerceAtLeast(18f)
+                numberCenterY = (glyphBounds.height() / 2f + 1f).coerceAtLeast(11f)
+            }
             val battery = config.batteryColor(state, tint)
             val line = 5.5f * config.stroke / 100f
             val charging = state.batteryPhase == BatteryPhase.CHARGING
@@ -42,6 +47,8 @@ class IndicatorRenderer {
             // Fade only the arc layer, never the wallpaper or previously drawn content.
             val arcLayer = if (charging || full || showNumber) canvas.saveLayer(0f, -4f, 100f, 100f, null) else -1
             bounds.set(12f, 9f, 88f, 85f)
+            val batteryCenterX = bounds.centerX()
+            val batteryCenterY = bounds.centerY()
             stroke(tint, line, 46)
             canvas.drawArc(bounds, 150f, 240f, false, paint)
             stroke(battery, line)
@@ -71,7 +78,9 @@ class IndicatorRenderer {
                 canvas.drawLine(53f, 19f, 53f, 25f, paint)
             }
 
-            if (state.wifiConnected || state.wifi == WifiPhase.CONNECTING) {
+            if (config.centerNumber) {
+                text(canvas, number, batteryCenterX, batteryCenterY, numberSize, tint, 60f, centerVertically = true)
+            } else if (state.wifiConnected || state.wifi == WifiPhase.CONNECTING) {
                 val ws = min(config.wifiScale / 115f, 1.16f)
                 val wSave = canvas.save()
                 canvas.scale(ws, ws, 50f, 53f)
@@ -113,7 +122,7 @@ class IndicatorRenderer {
                 simMark(canvas, state.sim, tint)
             }
             if (state.roaming && !state.airplane) text(canvas, "R", 78f, 76f, 9f, tint)
-            if (state.battery < 0 && !showNumber) text(canvas, "?", 50f, 26f, 12f, tint)
+            if (state.battery < 0 && !showNumber && !config.centerNumber) text(canvas, "?", 50f, 26f, 12f, tint)
         } finally {
             canvas.restoreToCount(save)
         }
@@ -205,7 +214,6 @@ class IndicatorRenderer {
         maxWidth: Float = 100f, centerVertically: Boolean = false) {
         prepareText(value, size, color, maxWidth)
         val y = if (centerVertically) {
-            val glyphBounds = Rect()
             paint.getTextBounds(value, 0, value.length, glyphBounds)
             baseline - (glyphBounds.top + glyphBounds.bottom) / 2f
         } else baseline
@@ -213,7 +221,7 @@ class IndicatorRenderer {
     }
 
     private fun prepareText(value: String, size: Float, color: Int, maxWidth: Float) {
-        fill(color); paint.typeface = Typeface.create("sans-serif", Typeface.BOLD)
+        fill(color); paint.typeface = numberTypeface
         paint.textSize = size; paint.textAlign = Paint.Align.CENTER
         val measured = paint.measureText(value)
         if (measured > maxWidth) paint.textSize *= maxWidth / measured

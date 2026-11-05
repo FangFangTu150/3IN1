@@ -7,7 +7,6 @@ import android.net.wifi.WifiManager
 import android.os.*
 import android.provider.Settings
 import android.telephony.*
-import android.util.SparseArray
 import de.robv.android.xposed.XposedHelpers
 import de.robv.android.xposed.XposedBridge
 import io.github.threeinone.model.*
@@ -23,14 +22,18 @@ class SystemStateSource(
     private val failed: (Throwable) -> Unit
 ) {
     private val main = Handler(Looper.getMainLooper())
-    private var current = IndicatorState()
+    private val publication = StatePublication(changed)
+    private val resources = OwnedResources()
+    private lateinit var reader: ControllerSnapshot
     private var proxy: Any? = null
-    private var running = false
+    private val running get() = publication.running
     private var lastBatteryLog = ""
-    private var receiverRegistered = false
-    private var connectivityRegistered = false
     private val connectivity = context.getSystemService(ConnectivityManager::class.java)
-    private val collect = Runnable { if (running) runCatching { snapshot() }.onFailure(failed) }
+    private val collect = Runnable {
+        val token = publication.generation
+        if (publication.accepts(token)) runCatching { snapshot(token) }
+            .onFailure { error -> main.post { if (publication.accepts(token)) failed(error) } }
+    }
     private val callback = object : ConnectivityManager.NetworkCallback() {
         override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) {
             if (running) schedule()
@@ -39,6 +42,7 @@ class SystemStateSource(
     }
     private val receiver = object : BroadcastReceiver() {
         override fun onReceive(c: Context?, intent: Intent?) {
+            if (!running) return
             if (intent?.action == Intent.ACTION_BATTERY_CHANGED) {
                 acceptBattery(intent, "broadcast")
             }
@@ -48,7 +52,10 @@ class SystemStateSource(
 
     fun start() {
         if (running) return
-        running = true
+        check(resources.pending.isEmpty()) { "State source cleanup pending: ${resources.pending}" }
+        reader = ControllerSnapshot(controller)
+        check(reader.handler.looper !== main.looper) { "Unsupported main-thread network controller" }
+        publication.start()
         try {
             require(context.packageName == "com.android.systemui") { "State source requires SystemUI context" }
             for (permission in listOf("android.permission.ACCESS_NETWORK_STATE", "android.permission.READ_PHONE_STATE",
@@ -65,12 +72,13 @@ class SystemStateSource(
                 addAction(TelephonyManager.ACTION_PHONE_STATE_CHANGED)
             }
             val initialBattery = context.registerReceiver(receiver, filter, Context.RECEIVER_EXPORTED)
-            receiverRegistered = true
+            resources.add("battery-receiver") { context.unregisterReceiver(receiver) }
             if (initialBattery?.action == Intent.ACTION_BATTERY_CHANGED) {
                 acceptBattery(initialBattery, "initial-sticky")
             } else {
                 XposedBridge.log("3IN1 battery: no initial sticky snapshot; waiting for battery broadcast")
             }
+            if (!running) return
             val type = loader.loadClass("com.android.systemui.statusbar.connectivity.SignalCallback")
             proxy = Proxy.newProxyInstance(loader, arrayOf(type)) { obj, method, args ->
                 when (method.name) {
@@ -80,35 +88,50 @@ class SystemStateSource(
                     else -> { schedule(); null }
                 }
             }
-            XposedHelpers.callMethod(controller, "addCallback", proxy)
             connectivity.registerNetworkCallback(NetworkRequest.Builder()
                 .addTransportType(NetworkCapabilities.TRANSPORT_WIFI).build(), callback, main)
-            connectivityRegistered = true
-            schedule()
+            resources.add("wifi-callback") { connectivity.unregisterNetworkCallback(callback) }
+            val token = publication.generation
+            reader.handler.post {
+                synchronized(resources) {
+                    if (!publication.accepts(token)) return@synchronized
+                    runCatching {
+                        // addCallback itself reads the mutable controllers to send initial values.
+                        val signal = requireNotNull(proxy)
+                        synchronized(requireNotNull(XposedHelpers.getObjectField(controller, "mLock"))) {
+                            resources.add("signal-callback") {
+                                XposedHelpers.callMethod(controller, "removeCallback", signal)
+                            }
+                            XposedHelpers.callMethod(controller, "addCallback", signal)
+                        }
+                        schedule()
+                    }.onFailure { error -> main.post { if (publication.accepts(token)) failed(error) } }
+                }
+            }
         } catch (error: Throwable) {
-            stop()
+            runCatching { stop() }.exceptionOrNull()?.let { error.addSuppressed(it) }
             throw error
         }
     }
 
-    fun stop() {
-        running = false
-        main.removeCallbacks(collect)
-        proxy?.let { runCatching { XposedHelpers.callMethod(controller, "removeCallback", it) } }
-        proxy = null
-        if (receiverRegistered) runCatching { context.unregisterReceiver(receiver) }
-        if (connectivityRegistered) runCatching { connectivity.unregisterNetworkCallback(callback) }
-        receiverRegistered = false
-        connectivityRegistered = false
+    fun stop() = synchronized(resources) {
+        publication.stop()
+        if (::reader.isInitialized) reader.handler.removeCallbacks(collect)
+        val errors = resources.releaseAll()
+        if (errors.isEmpty()) proxy = null
+        check(errors.isEmpty()) { "State cleanup failed: ${errors.joinToString()}" }
     }
 
     private fun schedule() {
-        main.removeCallbacks(collect)
-        main.post(collect)
+        if (!running || !::reader.isInitialized) return
+        synchronized(collect) {
+            if (!reader.handler.hasCallbacks(collect)) reader.handler.post(collect)
+        }
     }
 
     private fun acceptBattery(intent: Intent, origin: String) {
-        current = BatterySnapshot.apply(current, intent)
+        publication.battery(BatterySnapshot.apply(publication.current, intent))
+        val current = publication.current
         val details = "level=${intent.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)}" +
             " scale=${intent.getIntExtra(BatteryManager.EXTRA_SCALE, 0)}" +
             " status=${intent.getIntExtra(BatteryManager.EXTRA_STATUS, BatteryManager.BATTERY_STATUS_UNKNOWN)}" +
@@ -122,55 +145,50 @@ class SystemStateSource(
         }
     }
 
-    private fun snapshot() {
-        val wifiController = field(controller, "mWifiSignalController")!!
-        val wifi = field(wifiController, "mCurrentState")!!
+    private fun snapshot(token: Long) {
+        val subId = SubscriptionManager.getDefaultDataSubscriptionId()
+        val values = reader.capture(subId)
         // Same current-network API used by this firmware's WifiStatusTracker.
         val network = XposedHelpers.callMethod(context.getSystemService(WifiManager::class.java),
             "getCurrentNetwork") as? Network
         val caps = network?.let { connectivity.getNetworkCapabilities(it) }
-        val wifiPhase = WifiStatus.phase(bool(wifi, "enabled"), bool(wifi, "isTransient"),
-            bool(wifi, "connected"), caps)
+        val wifiPhase = WifiStatus.phase(values.wifiEnabled, values.wifiTransient,
+            values.wifiConnected, caps)
         val phone = context.getSystemService(TelephonyManager::class.java)
-        val subId = SubscriptionManager.getDefaultDataSubscriptionId()
         val subscriptions = context.getSystemService(SubscriptionManager::class.java).activeSubscriptionInfoList.orEmpty()
         val selected = subscriptions.firstOrNull { it.subscriptionId == subId }
-        @Suppress("UNCHECKED_CAST")
-        val mobiles = field(controller, "mMobileSignalControllers") as SparseArray<Any>
-        val mobile = mobiles[subId]?.let { field(it, "mCurrentState") }
         val subPhone = if (SubscriptionManager.isValidSubscriptionId(subId)) phone.createForSubscriptionId(subId) else phone
         val simStates = (0 until phone.activeModemCount.coerceAtLeast(1)).map { phone.getSimState(it) }
         val simState = selected?.let { phone.getSimState(it.simSlotIndex) }
         val locked = setOf(TelephonyManager.SIM_STATE_PIN_REQUIRED, TelephonyManager.SIM_STATE_PUK_REQUIRED,
             TelephonyManager.SIM_STATE_NETWORK_LOCKED, TelephonyManager.SIM_STATE_PERM_DISABLED)
-        val service = mobile?.let { field(it, "serviceState") as? ServiceState }
         val phase = when {
             simState in locked || (selected == null && simStates.any { it in locked }) -> SimPhase.LOCKED
             simStates.all { it == TelephonyManager.SIM_STATE_ABSENT } -> SimPhase.ABSENT
             selected == null && simStates.any { it == TelephonyManager.SIM_STATE_READY } -> SimPhase.DISABLED
             selected == null -> SimPhase.UNKNOWN
-            mobile == null -> SimPhase.UNKNOWN
-            bool(mobile, "isEmergency") -> SimPhase.EMERGENCY
-            service == null -> SimPhase.UNKNOWN
-            service.state != ServiceState.STATE_IN_SERVICE && !bool(mobile, "connected") -> SimPhase.NO_SIGNAL
+            values.identity == null -> SimPhase.UNKNOWN
+            values.emergency -> SimPhase.EMERGENCY
+            values.service == null -> SimPhase.UNKNOWN
+            values.service != ServiceState.STATE_IN_SERVICE && !values.connected -> SimPhase.NO_SIGNAL
             else -> SimPhase.READY
         }
-        val display = mobile?.let { field(it, "telephonyDisplayInfo") as? TelephonyDisplayInfo }
-        current = current.copy(
+        val airplane = Settings.Global.getInt(context.contentResolver, Settings.Global.AIRPLANE_MODE_ON, 0) != 0
+        val next = IndicatorState(
             powerSave = context.getSystemService(PowerManager::class.java).isPowerSaveMode,
-            wifi = wifiPhase, wifiLevel = number(wifi, "level").coerceIn(0, 4),
-            airplane = Settings.Global.getInt(context.contentResolver, Settings.Global.AIRPLANE_MODE_ON, 0) != 0,
-            sim = phase, mobileLevel = mobile?.let { number(it, "level").coerceIn(0, 4) } ?: 0,
+            wifi = wifiPhase, wifiLevel = values.wifiLevel.coerceIn(0, 4),
+            airplane = airplane,
+            sim = phase, mobileLevel = values.mobileLevel.coerceIn(0, 4),
             dataEnabled = selected != null && subPhone.isDataEnabled,
-            networkType = IndicatorState.networkLabel(display?.networkType ?: 0, display?.overrideNetworkType ?: 0),
-            roaming = mobile?.let { bool(it, "roaming") } ?: false,
-            networkReady = phase != SimPhase.UNKNOWN || Settings.Global.getInt(
-                context.contentResolver, Settings.Global.AIRPLANE_MODE_ON, 0) != 0
+            networkType = IndicatorState.networkLabel(values.networkType, values.overrideType),
+            roaming = values.roaming,
+            networkReady = phase != SimPhase.UNKNOWN || airplane
         )
-        changed(current)
+        if (!publication.accepts(token)) return
+        if (subId != SubscriptionManager.getDefaultDataSubscriptionId() || !reader.isCurrent(values)) {
+            schedule()
+            return
+        }
+        main.post { publication.network(token, next) }
     }
-
-    private fun field(obj: Any, name: String): Any? = XposedHelpers.getObjectField(obj, name)
-    private fun bool(obj: Any, name: String) = XposedHelpers.getBooleanField(obj, name)
-    private fun number(obj: Any, name: String) = XposedHelpers.getIntField(obj, name)
 }

@@ -23,10 +23,11 @@ data class IndicatorConfig(
     val showNumber: Boolean = false,
     val numberScale: Int = 115,
     val autoNumber: Boolean = false,
-    val numberThreshold: Int = 20
+    val numberThreshold: Int = 20,
+    val centerNumber: Boolean = false
 ) {
     fun showsNumber(state: IndicatorState): Boolean =
-        state.batteryPhase != BatteryPhase.CHARGING && state.batteryPhase != BatteryPhase.FULL && (showNumber ||
+        !centerNumber && state.batteryPhase != BatteryPhase.CHARGING && state.batteryPhase != BatteryPhase.FULL && (showNumber ||
         (autoNumber &&
             state.battery in 0..numberThreshold.coerceIn(1, 100)))
 
@@ -47,7 +48,7 @@ data class IndicatorConfig(
         const val PROBE_TIME = "probeTime"
         const val PROBE_REVISION = "probeRevision"
         fun normalizeNumberMode(p: SharedPreferences): Boolean {
-            if (!p.getBoolean("showNumber", false) || !p.getBoolean("autoNumber", false)) return false
+            if (!SafePreferences.boolean(p, "showNumber", false) || !SafePreferences.boolean(p, "autoNumber", false)) return false
             p.edit().putBoolean("autoNumber", false).apply()
             return true
         }
@@ -60,24 +61,25 @@ data class IndicatorConfig(
             editor.apply()
         }
         fun read(p: SharedPreferences) = IndicatorConfig(
-            enabled = p.getBoolean("enabled", false), lockscreen = p.getBoolean("lockscreen", true),
-            size = p.getInt("size", 22).coerceIn(16, 32),
-            wifiScale = p.getInt("wifiScale", 115).coerceIn(70, 150),
-            textScale = p.getInt("textScale", 150).coerceIn(80, 250),
-            stroke = p.getInt("stroke", 120).coerceIn(60, 160),
-            dotScale = p.getInt("dotScale", 100).coerceIn(60, 140),
-            dotSpacing = p.getInt("dotSpacing", 100).coerceIn(70, 125),
-            horizontalPadding = p.getInt("horizontalPadding", 2).coerceIn(0, 8),
-            verticalOffset = p.getInt("verticalOffset", 0).coerceIn(-4, 4),
-            colors = p.getBoolean("colors", true),
-            chargingColor = p.getInt("chargingColor", 0xFF1CB753.toInt()) or 0xFF000000.toInt(),
-            lowColor = p.getInt("lowColor", 0xFFE7433A.toInt()) or 0xFF000000.toInt(),
-            saverColor = p.getInt("saverColor", 0xFFFFB300.toInt()) or 0xFF000000.toInt(),
-            lowThreshold = p.getInt("lowThreshold", 20).coerceIn(5, 50),
-            showNumber = p.getBoolean("showNumber", false),
-            numberScale = p.getInt("numberScale", 115).coerceIn(75, 250),
-            autoNumber = !p.getBoolean("showNumber", false) && p.getBoolean("autoNumber", false),
-            numberThreshold = p.getInt("numberThreshold", 20).coerceIn(1, 100)
+            enabled = SafePreferences.boolean(p, "enabled", false), lockscreen = SafePreferences.boolean(p, "lockscreen", true),
+            size = SafePreferences.integer(p, "size", 22).coerceIn(16, 32),
+            wifiScale = SafePreferences.integer(p, "wifiScale", 115).coerceIn(70, 150),
+            textScale = SafePreferences.integer(p, "textScale", 150).coerceIn(80, 250),
+            stroke = SafePreferences.integer(p, "stroke", 120).coerceIn(60, 160),
+            dotScale = SafePreferences.integer(p, "dotScale", 100).coerceIn(60, 140),
+            dotSpacing = SafePreferences.integer(p, "dotSpacing", 100).coerceIn(70, 125),
+            horizontalPadding = SafePreferences.integer(p, "horizontalPadding", 2).coerceIn(0, 8),
+            verticalOffset = SafePreferences.integer(p, "verticalOffset", 0).coerceIn(-4, 4),
+            colors = SafePreferences.boolean(p, "colors", true),
+            chargingColor = SafePreferences.integer(p, "chargingColor", 0xFF1CB753.toInt()) or 0xFF000000.toInt(),
+            lowColor = SafePreferences.integer(p, "lowColor", 0xFFE7433A.toInt()) or 0xFF000000.toInt(),
+            saverColor = SafePreferences.integer(p, "saverColor", 0xFFFFB300.toInt()) or 0xFF000000.toInt(),
+            lowThreshold = SafePreferences.integer(p, "lowThreshold", 20).coerceIn(5, 50),
+            showNumber = SafePreferences.boolean(p, "showNumber", false),
+            numberScale = SafePreferences.integer(p, "numberScale", 115).coerceIn(75, 250),
+            autoNumber = !SafePreferences.boolean(p, "showNumber", false) && SafePreferences.boolean(p, "autoNumber", false),
+            numberThreshold = SafePreferences.integer(p, "numberThreshold", 20).coerceIn(1, 100),
+            centerNumber = SafePreferences.boolean(p, "centerNumber", false)
         )
     }
 }
